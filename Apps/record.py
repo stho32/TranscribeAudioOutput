@@ -34,7 +34,7 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Globale Variable für den Prozess
+# Globale Variablen für Prozesse
 recording_process = None
 start_time = None
 
@@ -42,8 +42,8 @@ start_time = None
 def signal_handler(signum, frame):
     """Handler für SIGINT (Ctrl+C)."""
     global recording_process
+    logger.info("Beende Aufnahme...")
     if recording_process:
-        logger.info("Beende Aufnahme...")
         recording_process.terminate()
 
 
@@ -65,71 +65,111 @@ def format_size(bytes_size: int) -> str:
     return f"{bytes_size:.1f} TB"
 
 
-def get_default_monitor() -> str | None:
-    """Ermittelt den Standard-Monitor-Sink (System-Audio-Output)."""
+def get_audio_sources() -> list[tuple[str, str, bool]]:
+    """
+    Listet verfügbare Audio-Quellen über wpctl auf.
+    Gibt Liste von (target_name, beschreibung, is_monitor) zurück.
+
+    Für System-Audio (Sinks) wird der ALSA-Name mit .monitor verwendet,
+    für Mikrofone (Sources) der direkte ALSA-Name.
+    """
+    sources = []
+    default_sink_alsa = None
+    default_source_alsa = None
+
+    # wpctl status parsen um Default-Geräte zu finden
     try:
         result = subprocess.run(
-            ["pactl", "get-default-sink"],
+            ["wpctl", "status"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
-            default_sink = result.stdout.strip()
-            return f"{default_sink}.monitor"
+            for line in result.stdout.split("\n"):
+                # Settings-Sektion: Hole die ALSA-Namen für Defaults
+                if "Audio/Sink" in line:
+                    parts = line.split("Audio/Sink")
+                    if len(parts) >= 2:
+                        default_sink_alsa = parts[1].strip()
+                elif "Audio/Source" in line:
+                    parts = line.split("Audio/Source")
+                    if len(parts) >= 2:
+                        default_source_alsa = parts[1].strip()
+
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
-    return None
 
-
-def get_audio_sources() -> list[tuple[str, str]]:
-    """Listet verfügbare Audio-Quellen auf."""
-    sources = []
-
-    # Standard-Monitor (System-Output) zuerst
-    monitor = get_default_monitor()
-    if monitor:
-        sources.append((monitor, "System-Audio (Output)"))
-
-    # Weitere Quellen über pactl
+    # ALSA-Namen und Beschreibungen aus pw-cli holen
     try:
         result = subprocess.run(
-            ["pactl", "list", "sources", "short"],
+            ["pw-cli", "list-objects"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
-            for line in result.stdout.strip().split("\n"):
-                if not line:
-                    continue
-                parts = line.split("\t")
-                if len(parts) >= 2:
-                    source_name = parts[1]
-                    # Überspringe den bereits hinzugefügten Monitor
-                    if monitor and source_name == monitor:
-                        continue
-                    # Beschreibung erstellen
-                    if "monitor" in source_name.lower():
-                        desc = f"Monitor: {source_name}"
-                    elif "input" in source_name.lower() or "mic" in source_name.lower():
-                        desc = f"Mikrofon: {source_name}"
-                    else:
-                        desc = source_name
-                    sources.append((source_name, desc))
+            current_node_name = None
+            current_media_class = None
+            current_description = None
+
+            for line in result.stdout.split("\n"):
+                line = line.strip()
+                if "node.name" in line and "=" in line:
+                    parts = line.split("=", 1)
+                    if len(parts) >= 2:
+                        current_node_name = parts[1].strip().strip('"')
+                elif "node.description" in line and "=" in line:
+                    parts = line.split("=", 1)
+                    if len(parts) >= 2:
+                        current_description = parts[1].strip().strip('"')
+                elif "media.class" in line and "=" in line:
+                    parts = line.split("=", 1)
+                    if len(parts) >= 2:
+                        current_media_class = parts[1].strip().strip('"')
+
+                        # Wenn wir node.name und media.class haben, verarbeiten
+                        if current_node_name and current_media_class:
+                            if current_media_class == "Audio/Sink" and current_node_name.startswith("alsa_output"):
+                                # System-Audio: Monitor des Sinks
+                                monitor_name = f"{current_node_name}.monitor"
+                                display_name = current_description or current_node_name
+                                is_default = (current_node_name == default_sink_alsa)
+
+                                desc = f"System-Audio: {display_name}"
+                                if is_default:
+                                    desc += " (Standard)"
+                                    sources.insert(0, (monitor_name, desc, True))
+                                else:
+                                    sources.append((monitor_name, desc, True))
+
+                            elif current_media_class == "Audio/Source" and current_node_name.startswith("alsa_input"):
+                                # Mikrofon: Direkte Quelle
+                                display_name = current_description or current_node_name
+                                is_default = (current_node_name == default_source_alsa)
+
+                                desc = f"Mikrofon: {display_name}"
+                                if is_default:
+                                    desc += " (Standard)"
+                                sources.append((current_node_name, desc, False))
+
+                        # Reset nach Verarbeitung
+                        current_node_name = None
+                        current_media_class = None
+                        current_description = None
+
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
 
     return sources
 
 
-def ask_audio_source(sources: list[tuple[str, str]]) -> str | None:
+def ask_audio_source(sources: list[tuple[str, str, bool]]) -> str | None:
     """Fragt den Benutzer nach der Audio-Quelle."""
     print()
     print("Audio-Quelle auswählen:")
-    for i, (_, desc) in enumerate(sources):
-        default_marker = " (Standard)" if i == 0 else ""
-        print(f"  [{i}] {desc}{default_marker}")
+    for i, (_, desc, _) in enumerate(sources):
+        print(f"  [{i}] {desc}")
     print()
 
     while True:
@@ -178,11 +218,11 @@ def main():
     output_dir.mkdir(parents=True, exist_ok=True)
     logger.info(f"Ausgabe-Verzeichnis: {output_dir}")
 
-    # Prüfe ob pw-record verfügbar ist
-    result = subprocess.run(["which", "pw-record"], capture_output=True)
+    # Prüfe ob parecord verfügbar ist
+    result = subprocess.run(["which", "parecord"], capture_output=True)
     if result.returncode != 0:
-        logger.error("pw-record nicht gefunden!")
-        logger.error("Bitte installieren: sudo apt install pipewire-audio-client-libraries")
+        logger.error("parecord nicht gefunden!")
+        logger.error("Bitte installieren: sudo apt install pulseaudio-utils")
         sys.exit(1)
 
     # Audio-Quelle bestimmen
@@ -205,20 +245,20 @@ def main():
     logger.info("Drücke Ctrl+C zum Beenden der Aufnahme...")
     logger.info("")
 
-    # pw-record starten mit --target für die Quelle
-    cmd = [
-        "pw-record",
-        "--format", "s16",      # 16-bit signed
-        "--rate", "44100",      # CD-Qualität
-        "--channels", "2",      # Stereo
-        "--target", source,     # Audio-Quelle
-        str(filepath),
-    ]
-
     try:
         start_time = time.time()
+
+        # Nutze parecord (PulseAudio/PipeWire-Pulse Recorder)
+        # Dies ist der zuverlässigste Weg für Monitor-Aufnahmen
+        record_cmd = [
+            "parecord",
+            "-d", source,               # Audio-Quelle (inkl. .monitor für System-Audio)
+            "--file-format=wav",        # WAV-Format
+            str(filepath),
+        ]
+        logger.debug(f"Starte Aufnahme: {' '.join(record_cmd)}")
         recording_process = subprocess.Popen(
-            cmd,
+            record_cmd,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
@@ -245,7 +285,8 @@ def main():
         logger.info("=" * 50)
 
     except FileNotFoundError:
-        logger.error("pw-record nicht gefunden!")
+        logger.error("parecord nicht gefunden!")
+        logger.error("Bitte installieren: sudo apt install pulseaudio-utils")
         sys.exit(1)
     except Exception as e:
         logger.error(f"Fehler bei Aufnahme: {e}")
