@@ -1,30 +1,87 @@
 # TranscribeAudioOutput
 
-Dieses Repository enthält UV-basierte Python-Anwendungen als Single-File-Scripts.
+Dieses Repository enthält UV-basierte Python-Anwendungen als Single-File-Scripts zur Aufnahme und Transkription von System-Audio unter Linux.
 
 ## Struktur
 
 - **Anforderungen/** - Anforderungsdokumente für neue Apps (Markdown-Dateien)
 - **Apps/** - Fertige UV-Single-File-Scripts
 
-## Verwendung
+## Voraussetzungen
 
-### App ausführen
+- Python >= 3.11
+- [UV](https://github.com/astral-sh/uv) installiert
+- PipeWire mit `pw-record` (für Aufnahme)
+- OpenAI API-Key (für Transkription)
 
 ```bash
-uv run Apps/<app-name>.py
+# PipeWire Tools installieren (falls nicht vorhanden)
+sudo apt install pipewire-audio-client-libraries
+
+# OpenAI API-Key setzen
+export OPENAI_API_KEY='sk-...'
 ```
-
-### Neue App erstellen
-
-1. Anforderungsdokument in `Anforderungen/` anlegen
-2. App in `Apps/` implementieren
 
 ## Apps
 
 | App | Beschreibung |
 |-----|--------------|
-| [transcribe.py](Apps/transcribe.py) | Transkribiert Audio-Output des Systems in Echtzeit |
+| [record.py](Apps/record.py) | Nimmt System-Audio auf und speichert als WAV |
+| [transcribe.py](Apps/transcribe.py) | Transkribiert Audio-Dateien mit OpenAI Whisper API |
+
+## Verwendung
+
+### 1. Audio aufnehmen
+
+```bash
+# Startet Aufnahme (beenden mit Ctrl+C)
+uv run Apps/record.py
+
+# Mit anderem Ausgabe-Verzeichnis
+uv run Apps/record.py --output-dir /pfad/zum/ordner
+```
+
+Aufnahmen werden in `~/transcripts/` gespeichert mit Zeitstempel im Namen:
+`recording_20240111_143052.wav`
+
+### 2. Audio transkribieren
+
+```bash
+# Neueste Aufnahme transkribieren
+uv run Apps/transcribe.py
+
+# Spezifische Datei transkribieren
+uv run Apps/transcribe.py ~/transcripts/recording_20240111_143052.wav
+
+# Mit Sprache (schneller und genauer)
+uv run Apps/transcribe.py --language de
+
+# Transkription als .txt speichern
+uv run Apps/transcribe.py --save
+```
+
+## Workflow-Beispiel
+
+```bash
+# 1. Audio aufnehmen (z.B. von YouTube, Meeting, etc.)
+uv run Apps/record.py
+# ... Audio abspielen, dann Ctrl+C zum Stoppen
+
+# 2. Transkribieren
+uv run Apps/transcribe.py --language de --save
+
+# Ergebnis:
+# ~/transcripts/recording_20240111_143052.wav  (Audio)
+# ~/transcripts/recording_20240111_143052.txt  (Transkription)
+```
+
+## Hinweise
+
+- **Dateigröße**: OpenAI Whisper API unterstützt max. 25 MB. Bei größeren Dateien:
+  ```bash
+  ffmpeg -i recording.wav -b:a 64k recording.mp3
+  ```
+- **Kosten**: OpenAI Whisper API kostet ca. $0.006 pro Minute Audio
 
 ## UV Single-File Script Format
 
@@ -39,10 +96,6 @@ Jede App ist ein einzelnes Python-Script mit eingebetteten Abhängigkeiten:
 #     "package2>=1.0",
 # ]
 # ///
-
-"""
-App-Beschreibung hier.
-"""
 
 # Code hier...
 ```

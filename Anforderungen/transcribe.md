@@ -1,56 +1,70 @@
-# Transcribe - Audio-Output Transkription
+# Transcribe - Audio-Transkription mit OpenAI
 
 ## Zweck
 
-Transkribiert den Audio-Output des Linux-Systems in Echtzeit zu Text. Nutzt PipeWire (`pw-record`) zur Audio-Aufnahme und OpenAI Whisper für die Transkription.
+Transkribiert Audio-Dateien (WAV, MP3, etc.) mit der OpenAI Whisper API zu Text.
 
 ## Funktionale Anforderungen
 
-- [x] Audio-Output des Systems über PipeWire aufnehmen
-- [x] Echtzeit- oder Chunk-basierte Transkription
-- [x] Ausgabe der Transkription auf STDOUT
-- [x] Graceful Shutdown mit Ctrl+C
-- [x] Automatische Erkennung des Monitor-Sinks
+- [x] Audio-Dateien mit OpenAI Whisper API transkribieren
+- [x] Unterstützung für WAV, MP3, M4A, WEBM, MP4
+- [x] Sprache konfigurierbar (Standard: automatische Erkennung)
+- [x] Ausgabe als Text auf STDOUT
+- [x] Optional: Speichern als .txt Datei neben der Audio-Datei
+- [x] Verarbeitung der neuesten Datei im Verzeichnis (wenn kein Pfad angegeben)
 
 ## Technische Anforderungen
 
 - Python >= 3.11
-- PipeWire mit `pw-record` (extern installiert)
 - Abhängigkeiten:
-  - `openai-whisper` oder `faster-whisper` für lokale Transkription
-  - `numpy` für Audio-Verarbeitung
+  - `openai` - OpenAI Python SDK
+
+## Umgebungsvariablen
+
+- `OPENAI_API_KEY` - OpenAI API-Schlüssel (erforderlich)
 
 ## Verwendung
 
 ```bash
-# Standard-Ausführung (nimmt System-Audio auf und transkribiert)
+# Spezifische Datei transkribieren
+uv run Apps/transcribe.py /pfad/zur/datei.wav
+
+# Neueste Datei im Standard-Verzeichnis transkribieren
 uv run Apps/transcribe.py
 
-# Mit spezifischem Audio-Device
-uv run Apps/transcribe.py --device <device-name>
+# Mit spezifischer Sprache
+uv run Apps/transcribe.py recording.wav --language de
 
-# Mit anderem Whisper-Modell
-uv run Apps/transcribe.py --model medium
+# Ausgabe in Datei speichern
+uv run Apps/transcribe.py recording.wav --save
 ```
 
 ## Beispiele
 
 ```bash
-$ uv run Apps/transcribe.py
-2024-01-11 10:30:00 [INFO] App gestartet
-2024-01-11 10:30:01 [INFO] Verwende Audio-Device: alsa_output.pci-0000_00_1f.3.analog-stereo.monitor
-2024-01-11 10:30:02 [INFO] Whisper-Modell 'base' geladen
-2024-01-11 10:30:05 [INFO] Aufnahme gestartet, drücke Ctrl+C zum Beenden
-2024-01-11 10:30:10 [INFO] Transkription: "Hello and welcome to today's presentation..."
-2024-01-11 10:30:15 [INFO] Transkription: "We will be discussing the new features..."
-^C
-2024-01-11 10:30:20 [INFO] Aufnahme beendet
-2024-01-11 10:30:20 [INFO] App beendet
+$ uv run Apps/transcribe.py ~/transcripts/recording_20240111_143000.wav
+2024-01-11 14:40:00 [INFO] App gestartet
+2024-01-11 14:40:00 [INFO] Transkribiere: recording_20240111_143000.wav
+2024-01-11 14:40:00 [INFO] Dateigröße: 52.3 MB
+2024-01-11 14:40:05 [INFO] Sende an OpenAI Whisper API...
+2024-01-11 14:40:30 [INFO] Transkription erfolgreich (25.3 Sekunden)
+
+=== TRANSKRIPTION ===
+
+Hallo und willkommen zu diesem Tutorial. Heute werden wir uns ansehen,
+wie man Python-Anwendungen mit UV erstellt...
+
+=====================
+
+2024-01-11 14:40:30 [INFO] App beendet
+
+$ uv run Apps/transcribe.py ~/transcripts/recording_20240111_143000.wav --save
+2024-01-11 14:41:00 [INFO] Transkription gespeichert: recording_20240111_143000.txt
 ```
 
-## Architektur
+## OpenAI Whisper API
 
-1. **Audio-Aufnahme**: `pw-record` nimmt den Monitor-Sink auf (System-Audio-Output)
-2. **Chunking**: Audio wird in Segmente aufgeteilt (z.B. 5-10 Sekunden)
-3. **Transkription**: Jedes Segment wird mit Whisper transkribiert
-4. **Ausgabe**: Transkribierter Text wird auf STDOUT ausgegeben
+- Modell: `whisper-1`
+- Max. Dateigröße: 25 MB
+- Unterstützte Formate: mp3, mp4, mpeg, mpga, m4a, wav, webm
+- Große Dateien werden automatisch aufgeteilt
