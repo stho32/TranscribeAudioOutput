@@ -6,6 +6,7 @@ Dieses Repository enthält UV-basierte Python-Anwendungen als Single-File-Script
 
 - **Anforderungen/** - Anforderungsdokumente für neue Apps (Markdown-Dateien)
 - **Apps/** - Fertige UV-Single-File-Scripts
+- **Recordings/** - Aufnahmen und Transkriptionen (in .gitignore)
 
 ## Voraussetzungen
 
@@ -36,12 +37,9 @@ export OPENAI_API_KEY='sk-...'
 ```bash
 # Startet Aufnahme (beenden mit Ctrl+C)
 uv run Apps/record.py
-
-# Mit anderem Ausgabe-Verzeichnis
-uv run Apps/record.py --output-dir /pfad/zum/ordner
 ```
 
-Aufnahmen werden in `~/transcripts/` gespeichert mit Zeitstempel im Namen:
+Aufnahmen werden in `Recordings/` gespeichert mit Zeitstempel im Namen:
 `recording_20240111_143052.wav`
 
 ### 2. Audio transkribieren
@@ -50,15 +48,14 @@ Aufnahmen werden in `~/transcripts/` gespeichert mit Zeitstempel im Namen:
 # Neueste Aufnahme transkribieren
 uv run Apps/transcribe.py
 
-# Spezifische Datei transkribieren
-uv run Apps/transcribe.py ~/transcripts/recording_20240111_143052.wav
-
 # Mit Sprache (schneller und genauer)
 uv run Apps/transcribe.py --language de
 
-# Transkription als .txt speichern
-uv run Apps/transcribe.py --save
+# Spezifische Datei transkribieren
+uv run Apps/transcribe.py Recordings/recording_20240111_143052.wav
 ```
+
+Die Transkription wird automatisch als `.txt` neben der Audio-Datei gespeichert.
 
 ## Workflow-Beispiel
 
@@ -68,11 +65,11 @@ uv run Apps/record.py
 # ... Audio abspielen, dann Ctrl+C zum Stoppen
 
 # 2. Transkribieren
-uv run Apps/transcribe.py --language de --save
+uv run Apps/transcribe.py --language de
 
-# Ergebnis:
-# ~/transcripts/recording_20240111_143052.wav  (Audio)
-# ~/transcripts/recording_20240111_143052.txt  (Transkription)
+# Ergebnis in Recordings/:
+# recording_20240111_143052.wav  (Audio)
+# recording_20240111_143052.txt  (Transkription)
 ```
 
 ## Hinweise

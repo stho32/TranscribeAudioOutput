@@ -113,7 +113,7 @@ def main():
     parser.add_argument(
         "--language",
         "-l",
-        help="Sprache für Transkription (z.B. 'de', 'en'). Ohne Angabe: automatische Erkennung",
+        help="Sprache für Transkription (z.B. 'de', 'en'). Standard: automatische Erkennung",
     )
     parser.add_argument(
         "--dir",
@@ -173,12 +173,19 @@ def main():
         logger.error("Datei ist leer!")
         sys.exit(1)
 
+    # Sprache (None = automatische Erkennung)
+    language = args.language
+    if language:
+        logger.info(f"Sprache: {language}")
+    else:
+        logger.info("Sprache: Automatische Erkennung")
+
     # OpenAI-Client erstellen
     client = OpenAI(api_key=api_key)
 
     # Transkribieren
     try:
-        text = transcribe_file(client, file_path, language=args.language)
+        text = transcribe_file(client, file_path, language=language)
     except Exception as e:
         logger.error(f"Fehler bei Transkription: {e}")
         sys.exit(1)
