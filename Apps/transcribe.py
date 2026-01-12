@@ -17,7 +17,9 @@ Anforderungen: siehe ../Anforderungen/transcribe.md
 import argparse
 import logging
 import os
+import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -41,6 +43,9 @@ SUPPORTED_FORMATS = {".mp3", ".mp4", ".mpeg", ".mpga", ".m4a", ".wav", ".webm"}
 # Max. Dateigröße für OpenAI API (25 MB)
 MAX_FILE_SIZE = 25 * 1024 * 1024
 
+# Bitrate für MP3-Konvertierung (64 kbps ist ausreichend für Sprache)
+MP3_BITRATE = "64k"
+
 
 def format_size(bytes_size: int) -> str:
     """Formatiert Bytes als lesbare Größe."""
@@ -49,6 +54,41 @@ def format_size(bytes_size: int) -> str:
             return f"{bytes_size:.1f} {unit}"
         bytes_size /= 1024
     return f"{bytes_size:.1f} TB"
+
+
+def convert_to_mp3(input_path: Path, output_path: Path) -> bool:
+    """
+    Konvertiert eine Audio-Datei zu MP3 mit ffmpeg.
+
+    Args:
+        input_path: Pfad zur Eingabedatei
+        output_path: Pfad zur Ausgabedatei
+
+    Returns:
+        True wenn erfolgreich, False sonst
+    """
+    logger.info(f"Konvertiere zu MP3 ({MP3_BITRATE})...")
+
+    try:
+        result = subprocess.run(
+            [
+                "ffmpeg",
+                "-i", str(input_path),
+                "-b:a", MP3_BITRATE,
+                "-y",  # Überschreibe ohne Nachfrage
+                str(output_path),
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            logger.error(f"ffmpeg Fehler: {result.stderr}")
+            return False
+        return True
+    except FileNotFoundError:
+        logger.error("ffmpeg nicht gefunden!")
+        logger.error("Bitte installieren: sudo apt install ffmpeg")
+        return False
 
 
 def find_latest_recording(directory: Path) -> Path | None:
@@ -163,12 +203,6 @@ def main():
     logger.info(f"Transkribiere: {file_path.name}")
     logger.info(f"Dateigröße: {format_size(file_size)}")
 
-    if file_size > MAX_FILE_SIZE:
-        logger.error(f"Datei zu groß! Max. {format_size(MAX_FILE_SIZE)} für OpenAI API")
-        logger.error("Tipp: Konvertiere zu MP3 für kleinere Dateigröße:")
-        logger.error(f"  ffmpeg -i '{file_path}' -b:a 64k '{file_path.stem}.mp3'")
-        sys.exit(1)
-
     if file_size == 0:
         logger.error("Datei ist leer!")
         sys.exit(1)
@@ -183,27 +217,53 @@ def main():
     # OpenAI-Client erstellen
     client = OpenAI(api_key=api_key)
 
+    # Datei für Transkription vorbereiten (ggf. konvertieren)
+    transcribe_path = file_path
+    temp_file = None
+
+    if file_size > MAX_FILE_SIZE:
+        logger.warning(f"Datei zu groß ({format_size(file_size)}) - konvertiere automatisch zu MP3...")
+
+        # Temporäre MP3-Datei erstellen
+        temp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+        temp_file.close()
+        temp_path = Path(temp_file.name)
+
+        if not convert_to_mp3(file_path, temp_path):
+            temp_path.unlink(missing_ok=True)
+            sys.exit(1)
+
+        temp_size = temp_path.stat().st_size
+        logger.info(f"Konvertiert: {format_size(temp_size)}")
+
+        if temp_size > MAX_FILE_SIZE:
+            logger.error(f"Konvertierte Datei immer noch zu groß ({format_size(temp_size)})")
+            temp_path.unlink(missing_ok=True)
+            sys.exit(1)
+
+        transcribe_path = temp_path
+
     # Transkribieren
     try:
-        text = transcribe_file(client, file_path, language=language)
+        text = transcribe_file(client, transcribe_path, language=language)
     except Exception as e:
         logger.error(f"Fehler bei Transkription: {e}")
+        if temp_file:
+            Path(temp_file.name).unlink(missing_ok=True)
         sys.exit(1)
+    finally:
+        # Temporäre Datei aufräumen
+        if temp_file:
+            Path(temp_file.name).unlink(missing_ok=True)
 
-    # Ausgabe
-    print()
-    print("=" * 50)
-    print("TRANSKRIPTION")
-    print("=" * 50)
-    print()
-    print(text)
-    print()
-    print("=" * 50)
-
-    # Transkription als .txt neben der Audio-Datei speichern
+    # Transkription als .txt neben der ORIGINAL Audio-Datei speichern
     txt_path = file_path.with_suffix(".txt")
     txt_path.write_text(text, encoding="utf-8")
     logger.info(f"Transkription gespeichert: {txt_path}")
+
+    # Transkription ausgeben
+    print()
+    print(text)
 
     logger.info("App beendet")
 
