@@ -91,18 +91,19 @@ def convert_to_mp3(input_path: Path, output_path: Path) -> bool:
         return False
 
 
-def find_latest_recording(directory: Path) -> Path | None:
-    """Findet die neueste Audio-Datei im Verzeichnis."""
-    audio_files = []
-    for ext in SUPPORTED_FORMATS:
-        audio_files.extend(directory.glob(f"*{ext}"))
+def find_untranscribed_recordings(directory: Path) -> list[Path]:
+    """Findet alle WAV-Dateien ohne entsprechende .txt-Datei."""
+    wav_files = list(directory.glob("*.wav"))
 
-    if not audio_files:
-        return None
+    # Nur Dateien ohne .txt-Entsprechung
+    untranscribed = [
+        f for f in wav_files
+        if not f.with_suffix(".txt").exists()
+    ]
 
-    # Sortiere nach Änderungszeit (neueste zuerst)
-    audio_files.sort(key=lambda f: f.stat().st_mtime, reverse=True)
-    return audio_files[0]
+    # Sortiere nach Änderungszeit (älteste zuerst)
+    untranscribed.sort(key=lambda f: f.stat().st_mtime)
+    return untranscribed
 
 
 def transcribe_file(
@@ -143,12 +144,7 @@ def transcribe_file(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Transkribiert Audio-Dateien mit OpenAI Whisper API"
-    )
-    parser.add_argument(
-        "file",
-        nargs="?",
-        help="Pfad zur Audio-Datei (ohne Angabe: neueste Datei in Recordings/)",
+        description="Transkribiert alle WAV-Dateien ohne .txt-Entsprechung im Recordings-Verzeichnis"
     )
     parser.add_argument(
         "--language",
@@ -173,39 +169,22 @@ def main():
         logger.error("Bitte setzen: export OPENAI_API_KEY='sk-...'")
         sys.exit(1)
 
-    # Audio-Datei finden
-    if args.file:
-        file_path = Path(args.file).expanduser().resolve()
-    else:
-        search_dir = Path(args.dir).expanduser()
-        if not search_dir.exists():
-            logger.error(f"Verzeichnis nicht gefunden: {search_dir}")
-            sys.exit(1)
-
-        file_path = find_latest_recording(search_dir)
-        if not file_path:
-            logger.error(f"Keine Audio-Dateien gefunden in: {search_dir}")
-            sys.exit(1)
-
-        logger.info(f"Neueste Datei gefunden: {file_path.name}")
-
-    # Datei validieren
-    if not file_path.exists():
-        logger.error(f"Datei nicht gefunden: {file_path}")
+    # Recordings-Verzeichnis prüfen
+    search_dir = Path(args.dir).expanduser()
+    if not search_dir.exists():
+        logger.error(f"Verzeichnis nicht gefunden: {search_dir}")
         sys.exit(1)
 
-    if file_path.suffix.lower() not in SUPPORTED_FORMATS:
-        logger.error(f"Nicht unterstütztes Format: {file_path.suffix}")
-        logger.error(f"Unterstützt: {', '.join(SUPPORTED_FORMATS)}")
-        sys.exit(1)
+    # Untranscribierte WAV-Dateien finden
+    files_to_process = find_untranscribed_recordings(search_dir)
 
-    file_size = file_path.stat().st_size
-    logger.info(f"Transkribiere: {file_path.name}")
-    logger.info(f"Dateigröße: {format_size(file_size)}")
+    if not files_to_process:
+        logger.info(f"Keine unverarbeiteten WAV-Dateien in: {search_dir}")
+        sys.exit(0)
 
-    if file_size == 0:
-        logger.error("Datei ist leer!")
-        sys.exit(1)
+    logger.info(f"{len(files_to_process)} Datei(en) zu verarbeiten:")
+    for f in files_to_process:
+        logger.info(f"  - {f.name}")
 
     # Sprache (None = automatische Erkennung)
     language = args.language
@@ -217,53 +196,63 @@ def main():
     # OpenAI-Client erstellen
     client = OpenAI(api_key=api_key)
 
-    # Datei für Transkription vorbereiten (ggf. konvertieren)
-    transcribe_path = file_path
-    temp_file = None
+    # Alle Dateien verarbeiten
+    for file_path in files_to_process:
+        logger.info(f"--- Verarbeite: {file_path.name} ---")
 
-    if file_size > MAX_FILE_SIZE:
-        logger.warning(f"Datei zu groß ({format_size(file_size)}) - konvertiere automatisch zu MP3...")
+        file_size = file_path.stat().st_size
+        logger.info(f"Dateigröße: {format_size(file_size)}")
 
-        # Temporäre MP3-Datei erstellen
-        temp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
-        temp_file.close()
-        temp_path = Path(temp_file.name)
+        if file_size == 0:
+            logger.warning("Datei ist leer, überspringe...")
+            continue
 
-        if not convert_to_mp3(file_path, temp_path):
-            temp_path.unlink(missing_ok=True)
-            sys.exit(1)
+        # Datei für Transkription vorbereiten (ggf. konvertieren)
+        transcribe_path = file_path
+        temp_file = None
 
-        temp_size = temp_path.stat().st_size
-        logger.info(f"Konvertiert: {format_size(temp_size)}")
+        if file_size > MAX_FILE_SIZE:
+            logger.warning(f"Datei zu groß ({format_size(file_size)}) - konvertiere automatisch zu MP3...")
 
-        if temp_size > MAX_FILE_SIZE:
-            logger.error(f"Konvertierte Datei immer noch zu groß ({format_size(temp_size)})")
-            temp_path.unlink(missing_ok=True)
-            sys.exit(1)
+            # Temporäre MP3-Datei erstellen
+            temp_file = tempfile.NamedTemporaryFile(suffix=".mp3", delete=False)
+            temp_file.close()
+            temp_path = Path(temp_file.name)
 
-        transcribe_path = temp_path
+            if not convert_to_mp3(file_path, temp_path):
+                temp_path.unlink(missing_ok=True)
+                continue
 
-    # Transkribieren
-    try:
-        text = transcribe_file(client, transcribe_path, language=language)
-    except Exception as e:
-        logger.error(f"Fehler bei Transkription: {e}")
-        if temp_file:
-            Path(temp_file.name).unlink(missing_ok=True)
-        sys.exit(1)
-    finally:
-        # Temporäre Datei aufräumen
-        if temp_file:
-            Path(temp_file.name).unlink(missing_ok=True)
+            temp_size = temp_path.stat().st_size
+            logger.info(f"Konvertiert: {format_size(temp_size)}")
 
-    # Transkription als .txt neben der ORIGINAL Audio-Datei speichern
-    txt_path = file_path.with_suffix(".txt")
-    txt_path.write_text(text, encoding="utf-8")
-    logger.info(f"Transkription gespeichert: {txt_path}")
+            if temp_size > MAX_FILE_SIZE:
+                logger.error(f"Konvertierte Datei immer noch zu groß ({format_size(temp_size)})")
+                temp_path.unlink(missing_ok=True)
+                continue
 
-    # Transkription ausgeben
-    print()
-    print(text)
+            transcribe_path = temp_path
+
+        # Transkribieren
+        try:
+            text = transcribe_file(client, transcribe_path, language=language)
+
+            # Transkription als .txt neben der Audio-Datei speichern
+            txt_path = file_path.with_suffix(".txt")
+            txt_path.write_text(text, encoding="utf-8")
+            logger.info(f"Transkription gespeichert: {txt_path}")
+
+            # Transkription ausgeben
+            print()
+            print(text)
+            print()
+
+        except Exception as e:
+            logger.error(f"Fehler bei Transkription: {e}")
+        finally:
+            # Temporäre Datei aufräumen
+            if temp_file:
+                Path(temp_file.name).unlink(missing_ok=True)
 
     logger.info("App beendet")
 

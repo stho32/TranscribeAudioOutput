@@ -188,6 +188,46 @@ def ask_audio_source(sources: list[tuple[str, str, bool]]) -> str | None:
             sys.exit(0)
 
 
+def ask_recording_mode() -> int | None:
+    """
+    Fragt den Benutzer nach dem Aufnahme-Modus.
+    Gibt None zurück für unbegrenzte Aufnahme, oder Anzahl Minuten für zeitlimitiert.
+    """
+    print()
+    print("Aufnahme-Modus:")
+    print("  [0] Unbegrenzt (Ctrl+C zum Stoppen)")
+    print("  [1] Zeitlimitiert (Minuten angeben)")
+    print()
+
+    while True:
+        try:
+            choice = input("Auswahl (0-1, Enter für unbegrenzt): ").strip()
+            if choice == "" or choice == "0":
+                return None
+            if choice == "1":
+                return ask_duration_minutes()
+            print("Ungültige Auswahl, bitte 0 oder 1 eingeben.")
+        except KeyboardInterrupt:
+            print()
+            sys.exit(0)
+
+
+def ask_duration_minutes() -> int:
+    """Fragt den Benutzer nach der Aufnahme-Dauer in Minuten."""
+    while True:
+        try:
+            minutes_str = input("Aufnahme-Dauer in Minuten: ").strip()
+            minutes = int(minutes_str)
+            if minutes > 0:
+                return minutes
+            print("Bitte eine positive Zahl eingeben.")
+        except ValueError:
+            print("Bitte eine ganze Zahl eingeben.")
+        except KeyboardInterrupt:
+            print()
+            sys.exit(0)
+
+
 def main():
     global recording_process, start_time
 
@@ -236,13 +276,23 @@ def main():
 
     logger.info(f"Audio-Quelle: {source}")
 
+    # Aufnahme-Modus bestimmen
+    duration_minutes = ask_recording_mode()
+    if duration_minutes:
+        logger.info(f"Zeitlimitierte Aufnahme: {duration_minutes} Minute{'n' if duration_minutes != 1 else ''}")
+    else:
+        logger.info("Unbegrenzte Aufnahme (Ctrl+C zum Stoppen)")
+
     # Dateiname mit Zeitstempel
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     filename = f"recording_{timestamp}.wav"
     filepath = output_dir / filename
 
     logger.info(f"Starte Aufnahme: {filename}")
-    logger.info("Drücke Ctrl+C zum Beenden der Aufnahme...")
+    if duration_minutes:
+        logger.info(f"Aufnahme stoppt automatisch nach {duration_minutes} Minute{'n' if duration_minutes != 1 else ''}...")
+    else:
+        logger.info("Drücke Ctrl+C zum Beenden der Aufnahme...")
     logger.info("")
 
     try:
@@ -263,8 +313,17 @@ def main():
             stderr=subprocess.PIPE,
         )
 
-        # Warte auf Prozessende (durch Signal-Handler)
-        recording_process.wait()
+        # Warte auf Prozessende (durch Signal-Handler oder Timeout)
+        if duration_minutes:
+            timeout_seconds = duration_minutes * 60
+            try:
+                recording_process.wait(timeout=timeout_seconds)
+            except subprocess.TimeoutExpired:
+                logger.info(f"Zeitlimit von {duration_minutes} Minute{'n' if duration_minutes != 1 else ''} erreicht")
+                recording_process.terminate()
+                recording_process.wait()
+        else:
+            recording_process.wait()
 
         end_time = time.time()
         duration = end_time - start_time
