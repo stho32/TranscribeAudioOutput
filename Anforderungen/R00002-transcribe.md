@@ -1,3 +1,11 @@
+---
+id: R00002
+title: Transcribe - Audio-Transkription mit OpenAI
+type: feature
+status: done
+created: 2024-01-11
+---
+
 # Transcribe - Audio-Transkription mit OpenAI
 
 ## Zweck

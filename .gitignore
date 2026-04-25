@@ -5,3 +5,16 @@ Recordings/
 __pycache__/
 *.py[cod]
 *$py.class
+*.pyc
+.venv/
+.env
+dist/
+build/
+*.egg-info/
+
+# IDEs
+.idea/
+.vscode/
+
+# OS
+.DS_Store
