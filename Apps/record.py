@@ -77,25 +77,23 @@ def get_audio_sources() -> list[tuple[str, str, bool]]:
     default_sink_alsa = None
     default_source_alsa = None
 
-    # wpctl status parsen um Default-Geräte zu finden
+    # Default-Geräte über pactl info ermitteln.
+    # Wichtig: wpctl status liefert bei Bluetooth-Geräten den bluez_-Protokollnamen,
+    # aber pw-cli und parecord verwenden den alsa_output/alsa_input-Namen.
+    # pactl info liefert immer den korrekten PulseAudio-kompatiblen Namen.
     try:
         result = subprocess.run(
-            ["wpctl", "status"],
+            ["pactl", "info"],
             capture_output=True,
             text=True,
             timeout=5,
         )
         if result.returncode == 0:
             for line in result.stdout.split("\n"):
-                # Settings-Sektion: Hole die ALSA-Namen für Defaults
-                if "Audio/Sink" in line:
-                    parts = line.split("Audio/Sink")
-                    if len(parts) >= 2:
-                        default_sink_alsa = parts[1].strip()
-                elif "Audio/Source" in line:
-                    parts = line.split("Audio/Source")
-                    if len(parts) >= 2:
-                        default_source_alsa = parts[1].strip()
+                if line.startswith("Default Sink:"):
+                    default_sink_alsa = line.split(":", 1)[1].strip()
+                elif line.startswith("Default Source:"):
+                    default_source_alsa = line.split(":", 1)[1].strip()
 
     except (subprocess.TimeoutExpired, FileNotFoundError):
         pass
